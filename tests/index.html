@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Mile Marker tests</title>
+<style>body{font:15px system-ui,sans-serif;margin:24px}#result.pass{color:#0a6b3d}#result.fail{color:#b3261e}li{margin:4px 0;font-family:ui-monospace,monospace}</style>
+</head>
+<body>
+<h1 id="result">Running…</h1>
+<ul id="failures"></ul>
+<script type="module">
+import { run, fail } from "./harness.js";
+const files = [
+  "./harness.test.js",
+];
+for (const f of files) {
+  try { await import(f); } catch (err) { fail("load " + f, err); }
+}
+const r = await run();
+const h = document.getElementById("result");
+h.textContent = r.failed ? r.failed + " failed / " + r.total : "All " + r.total + " passed";
+h.className = r.failed ? "fail" : "pass";
+const ul = document.getElementById("failures");
+const { failures } = await import("./harness.js");
+for (const f of failures) { const li = document.createElement("li"); li.textContent = "FAIL " + f.name + " — " + f.message; ul.appendChild(li); }
+document.body.dataset.done = "1";
+</script>
+</body>
+</html>

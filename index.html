@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Mile Marker</title>
+<meta name="theme-color" content="#0a6b3d">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/favicon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="brand"><img class="logo" src="icons/icon.svg" alt=""><h1>Mile Marker</h1></div>
+    <div class="head-actions">
+      <button class="badge wait" id="syncBadge" type="button">Connect Drive</button>
+      <button class="iconbtn" id="installBtn" type="button" hidden>Install</button>
+      <button class="iconbtn" id="settingsBtn" type="button">Settings</button>
+    </div>
+  </header>
+
+  <div class="banner" id="connectBanner" hidden>
+    <p>Connect Google Drive to back up receipts and sync with your other devices. Everything you add now is saved on this device.</p>
+    <button class="btn primary" id="bannerConnect" type="button">Connect Google Drive</button>
+  </div>
+
+  <div id="status" class="status" hidden></div>
+
+  <div class="yearpick"><label for="year" class="muted">Year</label><select id="year"></select>
+    <button class="btn" id="exportBtn" type="button">Export CSV</button></div>
+
+  <section class="tiles" aria-label="Totals">
+    <div class="tile main"><span class="lbl" id="tMonthLbl">This month</span><span class="val num" id="tMonth">$0.00</span><span class="sub" id="tMonthSub">0 expenses</span></div>
+    <div class="tile"><span class="lbl" id="tYearLbl">Year total</span><span class="val num" id="tYear">$0.00</span><span class="sub muted" id="tYearSub">0 expenses</span></div>
+    <div class="tile"><span class="lbl">Missing receipts</span><span class="val num" id="tMissing">0</span><span class="sub muted" id="tMissingSub">this year</span></div>
+  </section>
+
+  <div class="grid2">
+    <section class="panel">
+      <div class="panel-head"><h2>By month</h2><span class="muted" style="font-size:13px">Tap a month to filter</span></div>
+      <div class="bars" id="bars"></div>
+    </section>
+    <section class="panel">
+      <div class="panel-head"><h2>By category</h2><span class="muted" id="catScope" style="font-size:13px"></span></div>
+      <div class="cats" id="cats"></div>
+    </section>
+  </div>
+
+  <section class="panel">
+    <div class="panel-head"><h2 id="logTitle">Expenses</h2><span class="muted num" id="logTotal"></span></div>
+    <div class="filters">
+      <button class="chip" id="chipMonth" type="button" aria-pressed="true">This month</button>
+      <button class="chip" id="chipYear" type="button" aria-pressed="false">Whole year</button>
+      <input class="search" id="search" type="search" placeholder="Search vendor, items, purpose">
+    </div>
+    <div class="log" id="log"></div>
+  </section>
+
+  <p class="note">Keep records for at least 3 years after you file (the IRS can go back 6 years if income was under-reported). For travel, meals and lodging, write down the business purpose. Expenses under $75 can be backed by a written record, except lodging, which always needs a receipt.</p>
+</div>
+
+<button class="fab" id="addBtn" type="button">+ Add expense</button>
+<button class="toast" id="toast" type="button" hidden></button>
+
+<div class="sheet-bg" id="formSheet" hidden>
+  <form class="sheet" id="form" novalidate>
+    <h2 id="formTitle">New expense</h2>
+    <div class="form">
+      <div class="field"><label for="fDate">Date</label><input id="fDate" type="date" required></div>
+      <div class="field"><label for="fAmount">Amount ($)</label><input id="fAmount" class="amount-in" type="text" inputmode="decimal" placeholder="0.00" required></div>
+      <div class="field full"><label for="fVendor">Vendor / place</label><input id="fVendor" type="text" placeholder="e.g. Love's Travel Stop, Baton Rouge" autocomplete="off" required></div>
+      <div class="field"><div class="panel-head" style="gap:6px"><label for="fCat">Category</label><button type="button" class="linkbtn" id="manageCats">Edit list</button></div><select id="fCat"></select>
+        <input id="fNewCat" type="text" maxlength="40" placeholder="New category name" hidden></div>
+      <div class="field"><label for="fPay">Paid with</label><select id="fPay"><option>Business card</option><option>Personal card</option><option>Cash</option><option>Debit</option><option>Fuel card</option><option>Other</option></select></div>
+      <div class="field full"><label for="fItems">Items</label><textarea id="fItems" rows="2" placeholder="e.g. 42.1 gal diesel, DEF fluid"></textarea></div>
+      <div class="field full"><label for="fPurpose">Business purpose</label><input id="fPurpose" type="text" placeholder="e.g. Job site in Lafayette for Smith Co."><span class="hint">The IRS asks for this on travel, meals and lodging.</span></div>
+      <div class="field full">
+        <label>Receipt</label>
+        <div class="receipt-box">
+          <div id="rPreview"></div>
+          <div class="actions" style="justify-content:flex-start">
+            <label class="btn primary" for="fCamera" id="cameraLbl">Take photo</label>
+            <label class="btn" for="fFile" id="fileLbl">Choose file</label>
+            <button class="btn" type="button" id="rRemove" hidden>Remove receipt</button>
+          </div>
+          <input id="fCamera" type="file" accept="image/*" capture="environment" hidden>
+          <input id="fFile" type="file" accept="image/*,application/pdf" hidden>
+          <span class="hint">Photo or PDF. Photos are resized to save space.</span>
+          <label class="check" for="fNoReceipt"><input type="checkbox" id="fNoReceipt"> No receipt available</label>
+          <input id="fNoReason" type="text" placeholder="Why? e.g. toll booth, cash parking, receipt lost" hidden>
+        </div>
+      </div>
+    </div>
+    <div class="err" id="formErr" hidden></div>
+    <div class="actions">
+      <button class="btn danger" type="button" id="delBtn" hidden>Delete</button>
+      <span class="spacer"></span>
+      <button class="btn" type="button" id="cancelBtn">Cancel</button>
+      <button class="btn primary" type="submit" id="saveBtn">Save</button>
+    </div>
+  </form>
+</div>
+
+<div class="sheet-bg" id="detailSheet" hidden>
+  <div class="sheet detail">
+    <div class="panel-head"><h2 id="dTitle"></h2><span class="num" id="dAmt" style="font-size:20px"></span></div>
+    <dl id="dList"></dl>
+    <div class="receipt-view" id="dReceipt"></div>
+    <div class="actions">
+      <span class="spacer"></span>
+      <button class="btn" type="button" id="dClose">Close</button>
+      <button class="btn primary" type="button" id="dEdit">Edit</button>
+    </div>
+  </div>
+</div>
+
+<div class="sheet-bg" id="catSheet" hidden>
+  <div class="sheet">
+    <h2>Categories</h2>
+    <div class="addrow"><input id="catNew" type="text" maxlength="40" placeholder="Add a category, e.g. Laundry"><button class="btn primary" type="button" id="catAdd">Add</button></div>
+    <div class="err" id="catErr" hidden></div>
+    <div class="catlist" id="catList"></div>
+    <p class="hint" style="margin:0">Removing a category you added doesn&rsquo;t change expenses already saved under it.</p>
+    <div class="actions"><button class="btn" type="button" id="catClose">Done</button></div>
+  </div>
+</div>
+
+<div class="sheet-bg" id="confirmSheet" hidden>
+  <div class="sheet">
+    <h2>Delete this expense?</h2>
+    <p id="confirmText" style="margin:0"></p>
+    <div class="actions"><button class="btn" type="button" id="confirmNo">Keep it</button><button class="btn danger" type="button" id="confirmYes">Delete</button></div>
+  </div>
+</div>
+
+<div class="sheet-bg" id="settingsSheet" hidden>
+  <div class="sheet settings">
+    <h2>Settings</h2>
+    <dl>
+      <dt>Google Drive</dt><dd id="sDrive">Not connected</dd>
+      <dt>Last sync</dt><dd id="sLast">Never</dd>
+      <dt>Version</dt><dd id="sVersion"></dd>
+    </dl>
+    <p class="hint" id="sSetupNote" hidden style="margin:0">Drive sync isn&rsquo;t set up for this copy of the app yet. See docs/SETUP.md.</p>
+    <div class="stack">
+      <button class="btn primary" type="button" id="sConnect">Connect Google Drive</button>
+      <button class="btn" type="button" id="sSync" hidden>Sync now</button>
+      <a id="sFolder" href="#" target="_blank" rel="noopener" hidden>Open the Mile Marker folder in Drive</a>
+      <button class="btn" type="button" id="sFree">Free up space on this device</button>
+      <span class="hint" id="sFreeMsg" hidden></span>
+      <button class="btn danger" type="button" id="sDisconnect" hidden>Disconnect Google Drive</button>
+    </div>
+    <div class="actions"><button class="btn" type="button" id="sClose">Done</button></div>
+  </div>
+</div>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
