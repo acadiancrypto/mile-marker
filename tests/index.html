@@ -18,6 +18,9 @@ const files = [
   "./csv.test.js",
   "./merge.test.js",
   "./store.test.js",
+  "./image.test.js",
+  "./categories.test.js",
+  "./expenses.test.js",
 ];
 for (const f of files) {
   try { await import(f); } catch (err) { fail("load " + f, err); }
