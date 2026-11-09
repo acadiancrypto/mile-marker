@@ -12,6 +12,8 @@
 import { run, fail } from "./harness.js";
 const files = [
   "./harness.test.js",
+  "./money.test.js",
+  "./names.test.js",
 ];
 for (const f of files) {
   try { await import(f); } catch (err) { fail("load " + f, err); }
