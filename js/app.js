@@ -5,7 +5,7 @@ import { openStore } from "./store.js";
 import { createExpenses } from "./expenses.js";
 import { initHome } from "./ui/home.js";
 import { initForm } from "./ui/form.js";
-import { initDetail } from "./ui/detail.js";
+import { initDetail, setReceiptFetcher } from "./ui/detail.js";
 import { initCategories, loadCategories } from "./ui/categories.js";
 import { setBeforeSave } from "./ui/form.js";
 import { initSettings, updateSettings } from "./ui/settings.js";
@@ -93,7 +93,9 @@ async function startSync() {
     isOnline: () => navigator.onLine,
     hasToken: auth.hasToken,
     onState: s => { syncState = s; showBadge(); },
+    onUnauthorized: () => auth.clearToken(),
   });
+  setReceiptFetcher(rec => (connected && navigator.onLine && auth.hasToken() ? sync.fetchReceipt(rec) : null));
   connected = !!(await state.store.getSetting("driveConnected"));
   initSettings({ connect, disconnect, syncNow: tapSync });
   updateSettings({ connected });

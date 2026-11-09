@@ -5,6 +5,10 @@ import { openForm } from "./form.js";
 
 let current = null;
 let objectUrl = null;
+let fetcher = null;
+
+/** app.js supplies a function that downloads a receipt from Drive, or returns null when it can't right now. */
+export const setReceiptFetcher = fn => { fetcher = fn; };
 
 export function initDetail() {
   $("dClose").onclick = closeDetail;
@@ -35,9 +39,20 @@ export async function openDetail(e) {
   box.textContent = "";
   $("detailSheet").hidden = false;
   if (!e.receipt) return;
-  const blob = await state.store.getBlob(e.id);
+  let blob = await state.store.getBlob(e.id);
+  if (!blob && e.receipt.driveId && fetcher) {
+    const note = el("p", "muted", "Downloading receipt from Google Drive…");
+    box.appendChild(note);
+    try { blob = await fetcher(e); } catch (err) { console.warn(err); blob = null; }
+    note.remove();
+  }
   if (current !== e) return;
-  if (!blob) { box.appendChild(el("p", "muted", "Receipt not on this device yet. It downloads at the next sync.")); return; }
+  if (!blob) {
+    box.appendChild(el("p", "muted", e.receipt.driveId
+      ? "Receipt is in Google Drive but not on this device. Connect to the internet and open it again, or tap the sync badge."
+      : "Receipt not on this device yet. It downloads at the next sync."));
+    return;
+  }
   objectUrl = URL.createObjectURL(blob);
   if ((blob.type || e.receipt.type) === "application/pdf") {
     const a = el("a", null, "Open receipt PDF");

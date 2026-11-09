@@ -1,4 +1,6 @@
 // Two-way sync between this device's store and the Mile Marker folder in Google Drive.
+// Order of a pass: pull (take newer copies, re-queue ours where Drive is behind), push the queue,
+// settings, then rebuild the CSV for every year touched.
 import { pickWinner, mergeSettings } from "./merge.js";
 import { buildYearCsv } from "./csv.js";
 import { receiptName } from "./names.js";
@@ -7,7 +9,11 @@ const OVERLAP_MS = 2 * 60 * 1000;
 const EXT = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif", "image/heic": "heic", "application/pdf": "pdf" };
 const extFor = type => EXT[type] || "bin";
 
-export function createSync({ store, drive, isOnline, hasToken, onState = () => {} }) {
+/** Errors that stop the whole pass (no network, signed out, Drive full); anything else only skips one expense. */
+const fatal = err => !err || err.status === 0 || err.status === 401 ||
+  (err.status === 403 && /quota|insufficient|scope/i.test((err.reason || "") + " " + (err.message || "")));
+
+export function createSync({ store, drive, isOnline, hasToken, onState = () => {}, onUnauthorized = () => {} }) {
   const state = { status: "waiting", waiting: 0, lastSync: null };
   let running = null;
 
@@ -30,54 +36,83 @@ export function createSync({ store, drive, isOnline, hasToken, onState = () => {
     }
   }
 
+  // ---------- push ----------
+
   async function push(f, years) {
-    const recordIds = await getMap("recordFileIds");
-    const syncedYears = await getMap("recordYears");
-    let receiptNames = null;
     let pushed = 0;
-    for (let q of await store.queueAll()) {
-      let rec = await store.get(q.id);
-      if (!rec) { await store.queueDelete(q.id); continue; }
-
-      if (q.needsReceiptUpload) {
-        const blob = rec.receipt && !rec.deleted ? await store.getBlob(rec.id) : null;
-        if (blob) {
-          receiptNames = receiptNames || await drive.listNames(f.receiptsId);
-          const type = blob.type || rec.receipt.type;
-          const name = receiptName(rec.date, rec.vendor, rec.amountCents, extFor(type), receiptNames, rec.id);
-          const up = await drive.uploadFile({ name, parentId: f.receiptsId, blob, mimeType: type });
-          receiptNames.add(name);
-          rec = { ...rec, receipt: { driveId: up.id, name, type } };
-          await store.put(rec);
-        }
-        q = { ...q, needsReceiptUpload: false };
-        await store.queuePut(q);
-      }
-
-      while (q.receiptToTrash.length) {
-        try { await drive.trash(q.receiptToTrash[0]); }
-        catch (err) { if (!err || err.status !== 404) throw err; }
-        q = { ...q, receiptToTrash: q.receiptToTrash.slice(1) };
-        await store.queuePut(q);
-      }
-
-      if (q.needsRecord) {
-        const up = await uploadInPlace({
-          name: rec.id + ".json", parentId: f.recordsId, mimeType: "application/json",
-          blob: new Blob([JSON.stringify(rec)], { type: "application/json" }), fileId: recordIds[rec.id],
-        });
-        recordIds[rec.id] = up.id;
-        await store.setSetting("recordFileIds", recordIds);
-        years.add(rec.year);
-        if (syncedYears[rec.id] && syncedYears[rec.id] !== rec.year) years.add(syncedYears[rec.id]);
-        syncedYears[rec.id] = rec.year;
-        await store.setSetting("recordYears", syncedYears);
-      }
-      await store.queueDelete(q.id);
-      pushed++;
+    const errors = [];
+    const ctx = { names: null };
+    for (const q of await store.queueAll()) {
+      try { if (await pushOne(f, q, years, ctx)) pushed++; }
+      catch (err) { if (fatal(err)) throw err; console.warn("Couldn't sync expense", q.id, err); errors.push(err); }
     }
-    return pushed;
+    return { pushed, errors };
   }
+
+  async function pushOne(f, q0, years, ctx) {
+    const id = q0.id, seq = q0.seq;
+    let rec = await store.get(id);
+    if (!rec) { await store.queueDelete(id); return false; }
+
+    if (q0.needsReceiptUpload) {
+      const localId = rec.receipt && rec.receipt.localId;
+      const blob = rec.receipt && !rec.deleted && !rec.receipt.driveId ? await store.getBlob(id) : null;
+      if (blob) {
+        ctx.names = ctx.names || await drive.listNames(f.receiptsId);
+        const type = blob.type || rec.receipt.type;
+        const name = receiptName(rec.date, rec.vendor, rec.amountCents, extFor(type), ctx.names, id);
+        const up = await drive.uploadFile({ name, parentId: f.receiptsId, blob, mimeType: type });
+        ctx.names.add(name);
+        // Attach the Drive file only if the record still points at the same photo (it may have changed meanwhile).
+        const out = await store.patch(id, (cur, q) => {
+          if (!cur || !cur.receipt || cur.receipt.localId !== localId || cur.receipt.driveId) return { orphan: true };
+          return { rec: { ...cur, receipt: { ...cur.receipt, driveId: up.id, name, type } }, q: q ? { ...q, needsReceiptUpload: false } : undefined };
+        });
+        if (out.orphan) await drive.trash(up.id).catch(() => {});
+      } else {
+        await store.patch(id, (cur, q) => {
+          const newerPhoto = cur && cur.receipt && !cur.deleted && !cur.receipt.driveId && cur.receipt.localId !== localId;
+          return q && !newerPhoto ? { q: { ...q, needsReceiptUpload: false } } : {};
+        });
+      }
+    }
+
+    const q1 = await store.queueGet(id);
+    for (const t of q1 ? q1.receiptToTrash : []) {
+      try { await drive.trash(t); }
+      catch (err) { if (!err || err.status !== 404) throw err; }
+      await store.patch(id, (cur, q) => (q ? { q: { ...q, receiptToTrash: q.receiptToTrash.filter(x => x !== t) } } : {}));
+    }
+
+    const q2 = await store.queueGet(id);
+    if (!q2) return true;
+    if (q2.needsReceiptUpload) return false; // a newer photo goes up first; never publish a record without it
+    rec = await store.get(id);
+    if (q2.needsRecord) {
+      const recordIds = await getMap("recordFileIds");
+      const syncedYears = await getMap("recordYears");
+      const up = await uploadInPlace({
+        name: id + ".json", parentId: f.recordsId, mimeType: "application/json",
+        blob: new Blob([JSON.stringify(rec)], { type: "application/json" }), fileId: recordIds[id],
+      });
+      recordIds[id] = up.id;
+      await store.setSetting("recordFileIds", recordIds);
+      years.add(rec.year);
+      if (syncedYears[id] && syncedYears[id] !== rec.year) years.add(syncedYears[id]);
+      syncedYears[id] = rec.year;
+      await store.setSetting("recordYears", syncedYears);
+    }
+    const uploaded = JSON.stringify(rec);
+    // Clear the entry only if nothing was saved while we were uploading.
+    await store.patch(id, (cur, q) => {
+      if (!q) return {};
+      const untouched = q.seq === seq || JSON.stringify(cur) === uploaded;
+      return untouched && !q.needsReceiptUpload && !q.receiptToTrash.length ? { q: null } : {};
+    });
+    return true;
+  }
+
+  // ---------- pull ----------
 
   async function pull(f, years) {
     const last = await store.getSetting("lastPullTime");
@@ -93,25 +128,55 @@ export function createSync({ store, drive, isOnline, hasToken, onState = () => {
       if (!remote || typeof remote.id !== "string" || typeof remote.updatedAt !== "number") { console.warn("Skipping malformed record", file.name); continue; }
       recordIds[remote.id] = file.id;
       const local = await store.get(remote.id);
-      if (pickWinner(local, remote) !== "remote") continue;
       if (local && JSON.stringify(local) === JSON.stringify(remote)) continue;
-      await store.put(remote);
-      await store.queueDelete(remote.id);
+      if (pickWinner(local, remote) !== "remote") {
+        // Drive holds an older or losing copy: make sure ours goes back up.
+        await store.patch(remote.id, (cur, q) => (q ? {} : { q: { id: remote.id, seq: crypto.randomUUID(), needsRecord: true, needsReceiptUpload: false, receiptToTrash: [] } }));
+        continue;
+      }
+      // Fetch the receipt before storing the record; if it fails, the sweep below retries it.
+      const haveIt = local && local.receipt && remote.receipt && local.receipt.driveId === remote.receipt.driveId && await store.getBlob(remote.id);
+      if (!remote.deleted && remote.receipt && remote.receipt.driveId && !haveIt) {
+        try { await store.putBlob(remote.id, await drive.download(remote.receipt.driveId)); }
+        catch (err) { if (fatal(err)) throw err; console.warn("Receipt download failed; will retry", remote.id, err); }
+      }
+      await store.patch(remote.id, (cur, q) => ({
+        rec: remote,
+        q: q && q.receiptToTrash.length ? { ...q, needsRecord: false, needsReceiptUpload: false } : null,
+      }));
       years.add(remote.year);
       if (local && local.year !== remote.year) years.add(local.year);
       syncedYears[remote.id] = remote.year;
       pulled++;
-      if (remote.deleted || !remote.receipt) { await store.deleteBlob(remote.id); continue; }
-      const sameFile = local && local.receipt && local.receipt.driveId === remote.receipt.driveId;
-      if (remote.receipt.driveId && !(sameFile && await store.getBlob(remote.id))) {
-        await store.putBlob(remote.id, await drive.download(remote.receipt.driveId));
-      }
+      if (remote.deleted || !remote.receipt) await store.deleteBlob(remote.id);
     }
     await store.setSetting("recordFileIds", recordIds);
     await store.setSetting("recordYears", syncedYears);
     if (serverTime) await store.setSetting("lastPullTime", serverTime);
+    await sweepMissingReceipts();
     return pulled;
   }
+
+  /** Download receipts this device should have but doesn't (failed or interrupted downloads). Skips ones cleared by "Free up space". */
+  async function sweepMissingReceipts() {
+    const cleared = new Set((await store.getSetting("clearedBlobs")) || []);
+    for (const r of await store.getAll()) {
+      if (r.deleted || !r.receipt || !r.receipt.driveId || cleared.has(r.id)) continue;
+      if (await store.getBlob(r.id)) continue;
+      try { await store.putBlob(r.id, await drive.download(r.receipt.driveId)); }
+      catch (err) { if (fatal(err)) throw err; console.warn("Receipt download failed; will retry", r.id, err); }
+    }
+  }
+
+  /** Download one receipt on demand (viewing a receipt cleared by "Free up space"). */
+  async function fetchReceipt(rec) {
+    if (!rec || !rec.receipt || !rec.receipt.driveId) return null;
+    const blob = await drive.download(rec.receipt.driveId);
+    await store.putBlob(rec.id, blob);
+    return blob;
+  }
+
+  // ---------- settings and CSV ----------
 
   async function syncSettings(f) {
     const local = (await store.getSetting("categories")) || { categories: [], updatedAt: 0 };
@@ -145,6 +210,8 @@ export function createSync({ store, drive, isOnline, hasToken, onState = () => {
     }
   }
 
+  // ---------- pass ----------
+
   async function pass() {
     const result = { pushed: 0, pulled: 0, csvYears: [] };
     const waiting = await waitingCount();
@@ -154,12 +221,15 @@ export function createSync({ store, drive, isOnline, hasToken, onState = () => {
     const years = new Set();
     try {
       const f = await folders();
-      result.pushed = await push(f, years);
       result.pulled = await pull(f, years);
+      const { pushed, errors } = await push(f, years);
+      result.pushed = pushed;
       await syncSettings(f);
       await writeCsvs(f, years);
       result.csvYears = [...years];
-      set({ status: "synced", waiting: await waitingCount(), lastSync: Date.now(), message: "" });
+      const left = await waitingCount();
+      if (errors.length) set({ status: "error", waiting: left, lastSync: Date.now(), message: errors[0].message || String(errors[0]) });
+      else set({ status: "synced", waiting: left, lastSync: Date.now(), message: "" });
     } catch (err) {
       console.error("Sync failed", err);
       const status = err && err.status === 401 ? "tap"
@@ -167,6 +237,7 @@ export function createSync({ store, drive, isOnline, hasToken, onState = () => {
         : err && err.status === 403 && /insufficient|scope/i.test(err.message || "") ? "reconnect"
         : "error";
       if (err && err.status === 404) await store.setSetting("folders", null);
+      if (err && err.status === 401) onUnauthorized();
       set({ status, waiting: await waitingCount(), message: (err && err.message) || String(err) });
     }
     return result;
@@ -177,5 +248,5 @@ export function createSync({ store, drive, isOnline, hasToken, onState = () => {
     return running;
   }
 
-  return { runPass, state };
+  return { runPass, fetchReceipt, state };
 }

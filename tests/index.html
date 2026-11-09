@@ -24,6 +24,7 @@ const files = [
   "./fake-drive.test.js",
   "./sync.test.js",
   "./badge.test.js",
+  "./sync-review.test.js",
 ];
 for (const f of files) {
   try { await import(f); } catch (err) { fail("load " + f, err); }

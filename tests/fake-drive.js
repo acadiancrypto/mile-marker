@@ -33,6 +33,7 @@ export class FakeDrive {
   }
   async uploadFile({ name, parentId, blob, mimeType, fileId, appProperties }) {
     this.check("uploadFile", { name, parentId, fileId });
+    if (this.beforeUpload) { const hook = this.beforeUpload; await hook({ name, parentId, fileId }); }
     if (fileId) {
       const f = this.files.get(fileId);
       if (!f) throw { status: 404, message: "not found" };
@@ -50,7 +51,7 @@ export class FakeDrive {
     return { files, serverTime: new Date(this.clock.t).toISOString() };
   }
   async download(fileId) {
-    this.check("download");
+    this.check("download", { fileId });
     const f = this.files.get(fileId);
     if (!f || !f.blob) throw { status: 404, message: "not found" };
     return f.blob;

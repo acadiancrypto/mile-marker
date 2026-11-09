@@ -52,6 +52,23 @@ function makeStore(db) {
     getSetting: key => read("settings", s => req(s.get(key))).then(r => r ? r.value : undefined),
     setSetting: (key, value) => write("settings", s => req(s.put({ key, value }))),
 
+    /**
+     * Read-modify-write a record and its queue entry in ONE transaction, so a save and a sync can't
+     * overwrite each other. fn(rec, q) returns {rec?, q?}: rec writes the record, q writes the entry,
+     * q: null deletes the entry, a missing key leaves it alone.
+     */
+    patch(id, fn) {
+      return tx(["expenses", "queue"], "readwrite", async t => {
+        const es = t.objectStore("expenses"), qs = t.objectStore("queue");
+        const [rec, q] = await Promise.all([req(es.get(id)), req(qs.get(id))]);
+        const out = fn(rec, q) || {};
+        if (out.rec) es.put(out.rec);
+        if (out.q === null) qs.delete(id);
+        else if (out.q) qs.put(out.q);
+        return out;
+      }).then(out => { changed(); return out; });
+    },
+
     async clearSyncedBlobs() {
       const [all, queue, blobKeys] = await Promise.all([
         read("expenses", s => req(s.getAll())),
@@ -61,7 +78,11 @@ function makeStore(db) {
       const pending = new Set(queue.filter(q => q.needsReceiptUpload).map(q => q.id));
       const have = new Set(blobKeys);
       const ids = all.filter(e => e.receipt && e.receipt.driveId && !pending.has(e.id) && have.has(e.id)).map(e => e.id);
-      if (ids.length) await write("blobs", s => Promise.all(ids.map(id => req(s.delete(id)))));
+      if (ids.length) {
+        await write("blobs", s => Promise.all(ids.map(id => req(s.delete(id)))));
+        const prev = (await read("settings", s => req(s.get("clearedBlobs")))) || { value: [] };
+        await write("settings", s => req(s.put({ key: "clearedBlobs", value: [...new Set([...prev.value, ...ids])] })));
+      }
       return ids.length;
     },
 

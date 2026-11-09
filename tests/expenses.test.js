@@ -16,9 +16,10 @@ test("expenses: saving with a receipt stores the record, blob and a queue entry"
   const { store, ex, saved, done } = await setup();
   const r = await ex.save(fields, { file: photo() });
   eq([r.year, r.month, r.deviceId, r.deleted], [2026, 11, "dev-a", false]);
-  eq(r.receipt, { driveId: null, name: null, type: "application/pdf" });
+  eq([r.receipt.driveId, r.receipt.name, r.receipt.type, typeof r.receipt.localId], [null, null, "application/pdf", "string"]);
   ok(await store.getBlob(r.id), "blob saved");
-  eq(await store.queueGet(r.id), { id: r.id, needsRecord: true, needsReceiptUpload: true, receiptToTrash: [] });
+  const q = await store.queueGet(r.id);
+  eq([q.needsRecord, q.needsReceiptUpload, q.receiptToTrash, typeof q.seq], [true, true, [], "string"]);
   eq(saved(), 1);
   done();
 });
@@ -65,6 +66,7 @@ test("expenses: deleting writes a tombstone and queues the receipt for trash", a
   const t = await store.get(first.id);
   eq(t.deleted, true);
   eq(await store.getBlob(first.id), undefined);
-  eq(await store.queueGet(first.id), { id: first.id, needsRecord: true, needsReceiptUpload: false, receiptToTrash: ["d1"] });
+  const q = await store.queueGet(first.id);
+  eq([q.needsRecord, q.needsReceiptUpload, q.receiptToTrash], [true, false, ["d1"]]);
   done();
 });

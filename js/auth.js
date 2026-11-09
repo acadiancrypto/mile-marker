@@ -56,6 +56,12 @@ export function requestToken({ interactive }) {
   });
 }
 
+/** Forget the current token (Drive said it's no longer valid); the next tap renews it. */
+export function clearToken() {
+  token = null; expiresAt = 0;
+  try { sessionStorage.removeItem(KEY); } catch { /* ignore */ }
+}
+
 export function signOut() {
   const t = token;
   token = null; expiresAt = 0;

@@ -21,7 +21,7 @@ export function createExpenses({ store, deviceId, onSaved = () => {} }) {
       if (file) {
         const blob = await shrinkImage(file);
         await store.putBlob(id, blob);
-        receipt = { driveId: null, name: null, type: blob.type || file.type || "application/octet-stream" };
+        receipt = { driveId: null, name: null, type: blob.type || file.type || "application/octet-stream", localId: crypto.randomUUID() };
         upload = true;
       } else {
         await store.deleteBlob(id);
@@ -41,15 +41,16 @@ export function createExpenses({ store, deviceId, onSaved = () => {} }) {
       updatedAt: nextStamp(existing && existing.updatedAt),
       deviceId,
     };
-    await store.put(record);
-
-    const prev = await store.queueGet(id);
-    await store.queuePut({
-      id,
-      needsRecord: true,
-      needsReceiptUpload: upload || (!dropPendingUpload && !!(prev && prev.needsReceiptUpload)),
-      receiptToTrash: [...(prev ? prev.receiptToTrash : []), ...trash],
-    });
+    const seq = crypto.randomUUID();
+    await store.patch(id, (_, prev) => ({
+      rec: record,
+      q: {
+        id, seq,
+        needsRecord: true,
+        needsReceiptUpload: upload || (!dropPendingUpload && !!(prev && prev.needsReceiptUpload)),
+        receiptToTrash: [...(prev ? prev.receiptToTrash : []), ...trash],
+      },
+    }));
     onSaved(record);
     return record;
   }
@@ -57,10 +58,11 @@ export function createExpenses({ store, deviceId, onSaved = () => {} }) {
   async function remove(existing) {
     const trash = existing.receipt && existing.receipt.driveId ? [existing.receipt.driveId] : [];
     const tomb = { ...existing, deleted: true, updatedAt: nextStamp(existing.updatedAt), deviceId };
-    await store.put(tomb);
     await store.deleteBlob(existing.id);
-    const prev = await store.queueGet(existing.id);
-    await store.queuePut({ id: existing.id, needsRecord: true, needsReceiptUpload: false, receiptToTrash: [...(prev ? prev.receiptToTrash : []), ...trash] });
+    await store.patch(existing.id, (_, prev) => ({
+      rec: tomb,
+      q: { id: existing.id, seq: crypto.randomUUID(), needsRecord: true, needsReceiptUpload: false, receiptToTrash: [...(prev ? prev.receiptToTrash : []), ...trash] },
+    }));
     onSaved(tomb);
     return tomb;
   }
