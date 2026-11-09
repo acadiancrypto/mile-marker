@@ -7,11 +7,112 @@ import { initHome } from "./ui/home.js";
 import { initForm } from "./ui/form.js";
 import { initDetail } from "./ui/detail.js";
 import { initCategories, loadCategories } from "./ui/categories.js";
+import { setBeforeSave } from "./ui/form.js";
+import { initSettings, updateSettings } from "./ui/settings.js";
+import { renderBadge } from "./ui/badge.js";
+import { GoogleDrive } from "./drive.js";
+import { createSync } from "./sync.js";
+import * as auth from "./auth.js";
 
-let syncHook = () => {};
-/** Ask for a sync soon (wired up when Drive sync is connected). */
-export const requestSync = () => syncHook();
-export const setSyncHook = fn => { syncHook = fn; };
+const SAVE_DEBOUNCE_MS = 3000;
+const INTERVAL_MS = 5 * 60 * 1000;
+
+let sync = null;
+let connected = false;
+let needsInteractive = false;
+let saveTimer = null;
+let syncState = { status: "waiting", waiting: 0, lastSync: null };
+
+const showBadge = () => renderBadge($("syncBadge"), { ...syncState, connected: connected && auth.configured() });
+
+/** Ask for a sync a few seconds from now (after saves). */
+export function requestSync() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(runSync, SAVE_DEBOUNCE_MS);
+  if (state.store) state.store.queueAll().then(q => { syncState = { ...syncState, waiting: q.length }; showBadge(); });
+}
+
+async function runSync() {
+  if (!sync || !connected || !auth.configured()) return;
+  const r = await sync.runPass();
+  await loadCategories();
+  if (r.pulled) await reload();
+  const f = await state.store.getSetting("folders");
+  updateSettings({ lastSync: syncState.lastSync, folderUrl: f ? "https://drive.google.com/drive/folders/" + f.rootId : null });
+}
+
+/** Called inside a tap: get a token (quietly if possible), then sync. */
+async function tapSync() {
+  if (!auth.configured()) { $("settingsBtn").click(); return; }
+  if (!connected) { await connect(); return; }
+  if (!auth.hasToken()) {
+    try { await auth.requestToken({ interactive: needsInteractive }); needsInteractive = false; }
+    catch (err) {
+      console.warn("Token request failed", err);
+      needsInteractive = true;
+      syncState = { ...syncState, status: "reconnect", message: "Google needs you to sign in again." };
+      showBadge();
+      return;
+    }
+  }
+  await runSync();
+}
+
+async function connect() {
+  try {
+    await auth.init();
+    await auth.requestToken({ interactive: true });
+  } catch (err) {
+    console.warn("Connect failed", err);
+    showStatus(err && err.error === "scope_not_granted"
+      ? "Mile Marker needs permission to save its own files in your Drive. Tap Connect again and tick the Drive box."
+      : "Couldn’t connect to Google Drive. Check your connection and try again.");
+    return;
+  }
+  showStatus("");
+  connected = true;
+  needsInteractive = false;
+  await state.store.setSetting("driveConnected", true);
+  updateSettings({ connected: true, email: await auth.fetchEmail() });
+  showBadge();
+  await runSync();
+}
+
+async function disconnect() {
+  auth.signOut();
+  connected = false;
+  await state.store.setSetting("driveConnected", false);
+  updateSettings({ connected: false, email: null });
+  showBadge();
+}
+
+async function startSync() {
+  sync = createSync({
+    store: state.store,
+    drive: new GoogleDrive(auth.getToken),
+    isOnline: () => navigator.onLine,
+    hasToken: auth.hasToken,
+    onState: s => { syncState = s; showBadge(); },
+  });
+  connected = !!(await state.store.getSetting("driveConnected"));
+  initSettings({ connect, disconnect, syncNow: tapSync });
+  updateSettings({ connected });
+  $("syncBadge").onclick = tapSync;
+  setBeforeSave(() => {
+    if (connected && auth.configured() && !auth.hasToken() && !needsInteractive) {
+      auth.requestToken({ interactive: false }).then(() => requestSync()).catch(() => { needsInteractive = true; });
+    }
+  });
+  window.addEventListener("online", runSync);
+  window.addEventListener("offline", () => { syncState = { ...syncState, status: "offline" }; showBadge(); });
+  setInterval(() => { if (document.visibilityState === "visible") runSync(); }, INTERVAL_MS);
+  setInterval(showBadge, 30_000);
+  const q = await state.store.queueAll();
+  syncState = { ...syncState, waiting: q.length };
+  showBadge();
+  if (auth.configured()) auth.init().catch(err => console.warn(err.message));
+  if (connected) runSync();
+}
 
 function showStatus(msg) { $("status").textContent = msg || ""; $("status").hidden = !msg; }
 
@@ -42,6 +143,7 @@ async function boot() {
   state.expenses = createExpenses({ store: state.store, deviceId, onSaved: () => requestSync() });
   await loadCategories();
   await reload();
+  await startSync();
   return state;
 }
 
