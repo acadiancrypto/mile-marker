@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 180">
+  <rect width="180" height="180" rx="40" fill="#0a6b3d"/>
+  <path d="M40 22 L140 22 L140 150 L130 159 L120 150 L110 159 L100 150 L90 159 L80 150 L70 159 L60 150 L50 159 L40 150 Z" fill="#ffffff"/>
+  <clipPath id="w"><rect x="50" y="32" width="80" height="78" rx="6"/></clipPath>
+  <g clip-path="url(#w)">
+    <rect x="50" y="32" width="80" height="78" fill="#23302a"/>
+    <circle cx="90" cy="60" r="17" fill="#2fa866"/>
+    <text x="90" y="68.5" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-weight="700" font-size="23" fill="#ffffff">$</text>
+    <rect x="50" y="78" width="80" height="1.5" fill="#3c4b43"/>
+    <path d="M84 79.5 L96 79.5 L124 110 L56 110 Z" fill="#55625b"/>
+    <rect x="89" y="84" width="2" height="5" fill="#f2b632"/>
+    <rect x="88.5" y="93" width="3" height="7" fill="#f2b632"/>
+    <rect x="88" y="103" width="4" height="7" fill="#f2b632"/>
+  </g>
+  <rect x="54" y="120" width="52" height="5" rx="2" fill="#c9d4ce"/>
+  <rect x="54" y="132" width="38" height="5" rx="2" fill="#c9d4ce"/>
+  <rect x="112" y="120" width="18" height="5" rx="2" fill="#0a6b3d"/>
+  <rect x="112" y="132" width="18" height="5" rx="2" fill="#0a6b3d"/>
+</svg>
