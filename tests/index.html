@@ -17,6 +17,7 @@ const files = [
   "./totals.test.js",
   "./csv.test.js",
   "./merge.test.js",
+  "./store.test.js",
 ];
 for (const f of files) {
   try { await import(f); } catch (err) { fail("load " + f, err); }
@@ -29,6 +30,8 @@ const ul = document.getElementById("failures");
 const { failures } = await import("./harness.js");
 for (const f of failures) { const li = document.createElement("li"); li.textContent = "FAIL " + f.name + " — " + f.message; ul.appendChild(li); }
 document.body.dataset.done = "1";
+const report = failures.map(f => "FAIL " + f.name + " — " + f.message).concat([h.textContent]).join("\n");
+fetch("/__report", { method: "POST", body: report }).catch(() => {});
 </script>
 </body>
 </html>
