@@ -8,10 +8,11 @@ export class FakeDrive {
     this.calls = [];
   }
   now() { this.clock.t += 1; return new Date(this.clock.t).toISOString(); }
-  failNext(method, status) { this.failures.push({ method, status }); }
-  check(method) {
+  /** Make the next matching call reject with {status}. match(args) narrows it, e.g. to one file name. */
+  failNext(method, status, match) { this.failures.push({ method, status, match }); }
+  check(method, args) {
     this.calls.push(method);
-    const i = this.failures.findIndex(f => f.method === method);
+    const i = this.failures.findIndex(f => f.method === method && (!f.match || f.match(args)));
     if (i >= 0) { const f = this.failures.splice(i, 1)[0]; throw { status: f.status, message: "fake " + f.status }; }
   }
   live(parentId) { return [...this.files.values()].filter(f => f.parentId === parentId && !f.trashed); }
@@ -31,7 +32,7 @@ export class FakeDrive {
     return file;
   }
   async uploadFile({ name, parentId, blob, mimeType, fileId, appProperties }) {
-    this.check("uploadFile");
+    this.check("uploadFile", { name, parentId, fileId });
     if (fileId) {
       const f = this.files.get(fileId);
       if (!f) throw { status: 404, message: "not found" };
