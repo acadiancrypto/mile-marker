@@ -147,4 +147,37 @@ async function boot() {
   return state;
 }
 
+function initInstallAndUpdates() {
+  let deferred = null;
+  window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); deferred = e; $("installBtn").hidden = false; });
+  window.addEventListener("appinstalled", () => { $("installBtn").hidden = true; deferred = null; });
+  $("installBtn").onclick = async () => {
+    if (!deferred) return;
+    deferred.prompt();
+    await deferred.userChoice;
+    deferred = null;
+    $("installBtn").hidden = true;
+  };
+
+  if (!("serviceWorker" in navigator)) return;
+  const toast = $("toast");
+  const offerUpdate = worker => {
+    toast.textContent = "Update ready · tap to reload";
+    toast.hidden = false;
+    toast.onclick = () => worker.postMessage("skipWaiting");
+  };
+  navigator.serviceWorker.register("sw.js", { type: "module" }).then(reg => {
+    if (reg.waiting && navigator.serviceWorker.controller) offerUpdate(reg.waiting);
+    reg.addEventListener("updatefound", () => {
+      const w = reg.installing;
+      w && w.addEventListener("statechange", () => {
+        if (w.state === "installed" && navigator.serviceWorker.controller) offerUpdate(w);
+      });
+    });
+  }).catch(err => console.warn("Offline mode unavailable:", err));
+  let reloaded = false;
+  navigator.serviceWorker.addEventListener("controllerchange", () => { if (!reloaded) { reloaded = true; location.reload(); } });
+}
+
+initInstallAndUpdates();
 export const ready = boot();

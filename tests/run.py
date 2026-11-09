@@ -8,13 +8,25 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PORT = 8081
 EDGE = os.environ.get("EDGE", r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe")
 report = {}
+down = {"on": False}  # POST /__down makes every later GET fail, to test offline mode
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *a, **kw):
         super().__init__(*a, directory=ROOT, **kw)
 
+    def do_GET(self):
+        if down["on"]:
+            self.send_error(503)
+            return
+        super().do_GET()
+
     def do_POST(self):
+        if self.path == "/__down":
+            down["on"] = True
+            self.send_response(204)
+            self.end_headers()
+            return
         if self.path == "/__report":
             n = int(self.headers.get("Content-Length", 0))
             report["text"] = self.rfile.read(n).decode("utf-8", "replace")
@@ -36,7 +48,7 @@ def main():
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     profile = tempfile.mkdtemp(prefix="mm-test-")
     edge = subprocess.Popen([EDGE, "--headless=new", "--disable-gpu", "--no-first-run",
-                             "--user-data-dir=" + profile, f"http://localhost:{PORT}/tests/"],
+                             "--user-data-dir=" + profile, f"http://localhost:{PORT}/" + (sys.argv[1] if len(sys.argv) > 1 else "tests/")],
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     deadline = time.time() + 45
     while "text" not in report and time.time() < deadline:
